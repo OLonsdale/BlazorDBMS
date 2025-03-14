@@ -1,7 +1,222 @@
 ﻿@page "/"
+@using System.Data
 
 <PageTitle>Home</PageTitle>
 
-<h1>Hello, world!</h1>
+<MudContainer MaxWidth="MaxWidth.Small">
 
-Welcome to your new app.
+    <MudTextField FullWidth Label="Connection String" Immediate @bind-Value="connectionString"/>
+    <MudButton Disabled="string.IsNullOrWhiteSpace(connectionString)" OnClick="OpenConnection">Open Connection
+    </MudButton>
+    <MudButton Disabled="Connection is null" OnClick="GetDatabases">Get Databases</MudButton>
+    <MudSelect Label="Database" @bind-Value="SelectedDatabase">
+        @foreach (var database in DatabaseNames)
+        {
+            <MudSelectItem Value="database">@database</MudSelectItem>
+        }
+    </MudSelect>
+    <MudButton Disabled="string.IsNullOrWhiteSpace(SelectedDatabase)" OnClick="GetTables">Get Tables</MudButton>
+    <MudSelect @bind-Value="SelectedTable" Label="Table">
+        @foreach (var table in TableNames)
+        {
+            <MudSelectItem Value="table">@table</MudSelectItem>
+        }
+    </MudSelect>
+    <MudNumericField Label="Row Count" @bind-Value="Rows"/>
+    <MudButton Disabled="string.IsNullOrWhiteSpace(SelectedTable)" OnClick="GetData">Get Data</MudButton>
+</MudContainer>
+
+@if (_Table is not null)
+{
+    <MudSimpleTable>
+        <MudTHeadRow>
+            @foreach (var header in _Table.ColumnNames)
+            {
+                <MudTh>@header</MudTh>
+            }
+        </MudTHeadRow>
+        @foreach (var row in _Table.Data)
+        {
+            <MudTr>
+                @foreach (var datum in row)
+                {
+                    <MudTd>@datum.ToString()</MudTd>
+                }
+            </MudTr>
+        }
+    </MudSimpleTable>
+}
+
+@code{
+
+    enum Vender
+    {
+        MS_SQL_Server,
+        MySQL,
+        Oracle,
+    };
+
+    string connectionString = "";
+    Vender SelectedVender = Vender.MS_SQL_Server;
+
+    List<string> DatabaseNames = [];
+    string SelectedDatabase = "";
+    List<string> TableNames = [];
+    string? SelectedTable;
+    int Rows = 1000;
+
+    class Table
+    {
+        public string TableName = "";
+        public List<string> ColumnNames = [];
+        public List<Type?> DataType = [];
+        public List<List<object>> Data = [];
+    }
+
+    Table? _Table = new();
+
+    SqlConnection? Connection = null;
+
+    async Task OpenConnection()
+    {
+        try
+        {
+            Connection = new();
+            Connection.ConnectionString = connectionString;
+            await Connection.OpenAsync();
+            Snackbar.Add("Connection Successful", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            await DialogService.ShowMessageBox("Error", ex.Message);
+        }
+        finally
+        {
+            if (Connection is not null)
+                await Connection.CloseAsync();
+        }
+    }
+
+    async Task GetDatabases()
+    {
+        try
+        {
+            await Connection.OpenAsync();
+
+            if (SelectedVender == Vender.MS_SQL_Server)
+            {
+                var query = $"SELECT name FROM sys.databases;";
+
+                SqlCommand command = new();
+                command.Connection = Connection;
+                command.CommandText = query;
+                command.CommandType = CommandType.Text;
+
+                var reader = await command.ExecuteReaderAsync();
+                if (reader.HasRows)
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        DatabaseNames.Add(reader.GetString(0));
+                    }
+                }
+            }
+            Snackbar.Add("Databases retrieved", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            await DialogService.ShowMessageBox("Error", ex.Message);
+        }
+        finally
+        {
+            if (Connection is not null)
+                await Connection.CloseAsync();
+        }
+    }
+
+    async Task GetTables()
+    {
+        try
+        {
+            await Connection.OpenAsync();
+            
+            if (SelectedVender == Vender.MS_SQL_Server)
+            {
+                var query = $"select table_name from {SelectedDatabase}.INFORMATION_SCHEMA.TABLES where TABLE_TYPE = 'BASE TABLE'";
+                SqlCommand command = new();
+                command.Connection = Connection;
+                command.CommandText = query;
+                command.CommandType = CommandType.Text;
+
+                var reader = await command.ExecuteReaderAsync();
+                if (reader.HasRows)
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        TableNames.Add(reader.GetString(0));
+                    }
+                }
+            }
+            Snackbar.Add("Tables retrieved", Severity.Success);
+
+        }
+        catch (Exception ex)
+        {
+            await DialogService.ShowMessageBox("Error", ex.Message);
+        }
+        finally
+        {
+            if (Connection is not null)
+                await Connection.CloseAsync();
+        }
+    }
+    
+    async Task GetData()
+    {
+        try
+        {
+            await Connection.OpenAsync();
+            
+            if (SelectedVender == Vender.MS_SQL_Server)
+            {
+                await Connection.ChangeDatabaseAsync(SelectedDatabase);
+                var query = $"select top {Rows} * from {SelectedTable}";
+                SqlCommand command = new();
+                command.Connection = Connection;
+                command.CommandText = query;
+                command.CommandType = CommandType.Text;
+
+                var reader = await command.ExecuteReaderAsync();
+
+                var x = reader.GetSchemaTable();
+
+                if (reader.HasRows)
+                {
+                    var cols = reader.GetColumnSchema();
+                    foreach (var col in cols)
+                    {
+                        _Table.ColumnNames.Add(col.ColumnName);
+                        _Table.DataType.Add(col.DataType);
+                    }
+                    while (await reader.ReadAsync())
+                    {
+
+                        var values = new object[reader.FieldCount];
+                        reader.GetValues(values);
+                        _Table.Data.Add(values.ToList());
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await DialogService.ShowMessageBox("Error", ex.Message + " " + ex.StackTrace);
+        }
+        finally
+        {
+            if (Connection is not null)
+                await Connection.CloseAsync();
+        }
+    }
+
+}
